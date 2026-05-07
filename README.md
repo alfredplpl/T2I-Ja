@@ -62,12 +62,17 @@ Useful options:
 - `--image-dir`: directory containing images
 - `--output`: JSONL output path
 - `--recursive`: include images in nested directories
+- `--limit`: process only the first N images
 - `--overwrite`: replace an existing output file
 - `--device`: device for Florence-2, default `cuda`
 - `--dtype`: `auto`, `fp32`, `fp16`, or `bf16`; default `auto`
 - `--task`: Florence task prompt, default `<DETAILED_CAPTION>`
+- `--attn-implementation`: attention backend for Florence-2, default `eager`
+- `--revision`: Florence model revision, default `21a599d414c4d928c9032694c424fb94458e3594`
 - `--max-new-tokens`: generation length limit, default `1024`
 - `--num-beams`: beam count, default `3`
+- `--square-pad` / `--no-square-pad`: pad non-square images to square before Florence-2, default enabled
+- `--square-pad-color`: RGB padding color value, default `255`
 - `--continue-on-error`: skip unreadable or failed images
 
 By default, image paths are absolute. To write portable relative paths:
@@ -83,6 +88,10 @@ uv run t2i-caption \
 ```
 
 This writes paths like `images/example.png`.
+
+The script keeps `trust_remote_code=True` because the Microsoft Florence-2 repository still relies on custom processor/model code for this workflow. It also installs a small compatibility shim for newer `transformers` versions where the Florence-2 remote config/tokenizer code can otherwise fail with missing `forced_bos_token_id` or `additional_special_tokens` attributes. Florence-2 defaults to `--attn-implementation eager` because the remote model class does not expose the SDPA support flags expected by newer `transformers` releases. Generation runs with `use_cache=False` to avoid the newer `EncoderDecoderCache` API that the Florence-2 remote generation code does not support.
+
+`t2i-caption` automatically re-runs itself in an isolated uv environment with `transformers==4.51.3`, `torch==2.8.0`, and CUDA 12.8 wheels. This keeps Florence-2's older remote code compatible without downgrading the main T2I environment used by Qwen/PixArt.
 
 ## Train
 
