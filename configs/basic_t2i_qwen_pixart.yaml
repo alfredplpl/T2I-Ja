@@ -1,0 +1,37 @@
+models:
+  vae_name: Qwen/Qwen-Image-2512
+  vae_subfolder: vae
+  text_encoder_name: Qwen/Qwen3.5-2B-Base
+
+image:
+  resolution: 512
+  latent_channels: 16
+  latent_size: 64
+
+text:
+  max_length: 256
+  hidden_size: 2048
+
+transformer:
+  sample_size: 64
+  patch_size: 2
+  in_channels: 16
+  out_channels: 16
+  num_layers: 28
+  num_attention_heads: 16
+  attention_head_dim: 72
+  cross_attention_dim: 1152
+  caption_channels: 2048
+
+scheduler:
+  train_timesteps: 1000
+  beta_schedule: squaredcos_cap_v2
+
+train:
+  learning_rate: 0.0001
+  batch_size: 1
+  epochs: 1
+  gradient_accumulation_steps: 1
+  mixed_precision: bf16
+  num_workers: 2
+  save_every_steps: 1000
