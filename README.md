@@ -39,9 +39,54 @@ This wheel is for Linux x86_64, Python 3.12, Torch 2.8, CUDA 12.x, and the CXX11
 
 The Qwen text encoder is configured with `attn_implementation: flash_attention_2` in `configs/basic_t2i_qwen_pixart.yaml`.
 
+## Caption Images
+
+Generate a training JSONL from an image directory with Florence-2:
+
+```bash
+uv run t2i-caption \
+  --image-dir /path/to/images \
+  --output train.jsonl \
+  --recursive \
+  --overwrite
+```
+
+The command uses `microsoft/Florence-2-large` and `<DETAILED_CAPTION>` by default. Each output line matches the training format:
+
+```json
+{"image": "/path/to/image.png", "text": "a detailed Florence-2 caption"}
+```
+
+Useful options:
+
+- `--image-dir`: directory containing images
+- `--output`: JSONL output path
+- `--recursive`: include images in nested directories
+- `--overwrite`: replace an existing output file
+- `--device`: device for Florence-2, default `cuda`
+- `--dtype`: `auto`, `fp32`, `fp16`, or `bf16`; default `auto`
+- `--task`: Florence task prompt, default `<DETAILED_CAPTION>`
+- `--max-new-tokens`: generation length limit, default `1024`
+- `--num-beams`: beam count, default `3`
+- `--continue-on-error`: skip unreadable or failed images
+
+By default, image paths are absolute. To write portable relative paths:
+
+```bash
+uv run t2i-caption \
+  --image-dir /data/images \
+  --output train.jsonl \
+  --recursive \
+  --path-mode relative \
+  --relative-to /data \
+  --overwrite
+```
+
+This writes paths like `images/example.png`.
+
 ## Train
 
-Create a JSONL file with one sample per line:
+Use a JSONL file with one sample per line:
 
 ```json
 {"image": "/path/to/image.png", "text": "a short caption"}

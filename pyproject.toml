@@ -9,6 +9,7 @@ requires-python = ">=3.10"
 dependencies = [
   "accelerate>=0.34.0",
   "diffusers>=0.36.0",
+  "einops>=0.8.0",
   "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.12'",
   "huggingface-hub>=0.24.0",
   "ninja>=1.11.0",
@@ -16,6 +17,7 @@ dependencies = [
   "pillow>=10.0.0",
   "pyyaml>=6.0.0",
   "safetensors>=0.4.0",
+  "timm>=1.0.0",
   "torch==2.8.0",
   "torchvision==0.23.0",
   "transformers>=4.57.0",
@@ -25,6 +27,7 @@ dependencies = [
 t2i-train = "t2i_ja.cli.train:main"
 t2i-infer = "t2i_ja.cli.infer:main"
 t2i-export-pipeline = "t2i_ja.cli.export_pipeline:main"
+t2i-caption = "t2i_ja.cli.caption:main"
 
 [dependency-groups]
 dev = [
