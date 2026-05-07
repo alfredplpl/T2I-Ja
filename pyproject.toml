@@ -9,12 +9,15 @@ requires-python = ">=3.10"
 dependencies = [
   "accelerate>=0.34.0",
   "diffusers>=0.36.0",
+  "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.12'",
   "huggingface-hub>=0.24.0",
+  "ninja>=1.11.0",
+  "packaging>=24.0",
   "pillow>=10.0.0",
   "pyyaml>=6.0.0",
   "safetensors>=0.4.0",
-  "torch>=2.3.0",
-  "torchvision>=0.18.0",
+  "torch==2.8.0",
+  "torchvision==0.23.0",
   "transformers>=4.57.0",
 ]
 
@@ -33,3 +36,16 @@ where = ["src"]
 
 [tool.uv]
 package = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]

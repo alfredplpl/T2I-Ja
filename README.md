@@ -21,12 +21,23 @@ uv sync
 
 `Qwen/Qwen-Image-2512` uses `AutoencoderKLQwenImage`, so use a recent Diffusers build that includes Qwen Image support.
 
-For CUDA-specific PyTorch wheels, install PyTorch with the wheel index that matches your driver before running the project commands. Example for CUDA 12.1:
+This project is configured for PyTorch CUDA 12.8 wheels on Linux and Windows via uv:
 
 ```bash
-uv pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision
 uv sync
 ```
+
+The CUDA wheel index is `https://download.pytorch.org/whl/cu128`. On macOS, uv falls back to PyPI because CUDA wheels are not available there.
+
+FlashAttention is installed from the GitHub release asset for v2.8.3, not built from PyPI:
+
+```text
+https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+```
+
+This wheel is for Linux x86_64, Python 3.12, Torch 2.8, CUDA 12.x, and the CXX11 ABI PyTorch build. The project pins `torch==2.8.0` and `torchvision==0.23.0` so the FlashAttention wheel and PyTorch ABI match. For a different Python/Torch/ABI combination, choose the matching wheel from the Assets section of the v2.8.3 release and update the `flash-attn @ ...` URL in `pyproject.toml`.
+
+The Qwen text encoder is configured with `attn_implementation: flash_attention_2` in `configs/basic_t2i_qwen_pixart.yaml`.
 
 ## Train
 

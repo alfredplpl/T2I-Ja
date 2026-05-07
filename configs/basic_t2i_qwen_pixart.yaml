@@ -11,6 +11,7 @@ image:
 text:
   max_length: 256
   hidden_size: 2048
+  attn_implementation: flash_attention_2
 
 transformer:
   sample_size: 64

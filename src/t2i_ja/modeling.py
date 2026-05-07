@@ -65,10 +65,15 @@ class QwenTextConditioner:
         self.tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        model_kwargs = {
+            "torch_dtype": dtype,
+            "trust_remote_code": True,
+        }
+        if config.text.get("attn_implementation"):
+            model_kwargs["attn_implementation"] = config.text["attn_implementation"]
         self.text_encoder = AutoModel.from_pretrained(
             name,
-            torch_dtype=dtype,
-            trust_remote_code=True,
+            **model_kwargs,
         ).to(device)
         self.text_encoder.eval()
         for parameter in self.text_encoder.parameters():
