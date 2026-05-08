@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+from tqdm import tqdm
 
 from t2i_ja import build_transformer, load_config
 from t2i_ja.modeling import QwenTextConditioner, build_training_scheduler, load_qwen_image_vae
@@ -55,6 +56,10 @@ def build_optimizer(parameters, train_config: dict):
     raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
 
+def first_learning_rate(optimizer) -> float:
+    return float(optimizer.param_groups[0]["lr"])
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -96,46 +101,61 @@ def main() -> None:
 
     global_step = 0
     accumulation = int(train_config["gradient_accumulation_steps"])
+    total_steps = args.max_steps or (int(train_config["epochs"]) * len(loader))
+    progress = tqdm(total=total_steps, desc="Training", unit="step", dynamic_ncols=True)
     transformer.train()
-    for _epoch in range(int(train_config["epochs"])):
-        for batch in loader:
-            pixel_values = batch["pixel_values"].to(device=device, dtype=dtype)
-            prompts = list(batch["text"])
-            with torch.no_grad():
-                latents = vae.encode(pixel_values).latent_dist.sample()
-                if latents.ndim == 5:
-                    latents = latents.squeeze(2)
-                condition = text(prompts, device)
-                noise = torch.randn_like(latents)
-                timesteps = torch.randint(
-                    0,
-                    scheduler.config.num_train_timesteps,
-                    (latents.shape[0],),
-                    device=device,
-                    dtype=torch.long,
+    try:
+        for epoch in range(int(train_config["epochs"])):
+            if global_step >= total_steps:
+                break
+            for batch in loader:
+                pixel_values = batch["pixel_values"].to(device=device, dtype=dtype)
+                prompts = list(batch["text"])
+                with torch.no_grad():
+                    latents = vae.encode(pixel_values).latent_dist.sample()
+                    if latents.ndim == 5:
+                        latents = latents.squeeze(2)
+                    condition = text(prompts, device)
+                    noise = torch.randn_like(latents)
+                    timesteps = torch.randint(
+                        0,
+                        scheduler.config.num_train_timesteps,
+                        (latents.shape[0],),
+                        device=device,
+                        dtype=torch.long,
+                    )
+                    noisy_latents = scheduler.add_noise(latents, noise, timesteps)
+
+                with torch.autocast(device_type=device.type, dtype=dtype, enabled=autocast_enabled):
+                    prediction = transformer(
+                        noisy_latents,
+                        encoder_hidden_states=condition.hidden_states,
+                        encoder_attention_mask=condition.attention_mask,
+                        timestep=timesteps,
+                    ).sample
+                loss = F.mse_loss(prediction.float(), noise.float()) / accumulation
+                loss.backward()
+
+                optimizer_step = (global_step + 1) % accumulation == 0
+                if optimizer_step:
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
+
+                global_step += 1
+                progress.update(1)
+                progress.set_postfix(
+                    epoch=epoch + 1,
+                    loss=f"{loss.detach().float().item() * accumulation:.4f}",
+                    lr=f"{first_learning_rate(optimizer):.2e}",
+                    opt_step=int(optimizer_step),
                 )
-                noisy_latents = scheduler.add_noise(latents, noise, timesteps)
-
-            with torch.autocast(device_type=device.type, dtype=dtype, enabled=autocast_enabled):
-                prediction = transformer(
-                    noisy_latents,
-                    encoder_hidden_states=condition.hidden_states,
-                    encoder_attention_mask=condition.attention_mask,
-                    timestep=timesteps,
-                ).sample
-            loss = F.mse_loss(prediction.float(), noise.float()) / accumulation
-            loss.backward()
-
-            if (global_step + 1) % accumulation == 0:
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
-
-            global_step += 1
-            if global_step % int(train_config["save_every_steps"]) == 0:
-                transformer.save_pretrained(output_dir / f"transformer-{global_step}")
-            if args.max_steps is not None and global_step >= args.max_steps:
-                transformer.save_pretrained(output_dir / "transformer-final")
-                return
+                if global_step % int(train_config["save_every_steps"]) == 0:
+                    transformer.save_pretrained(output_dir / f"transformer-{global_step}")
+                if global_step >= total_steps:
+                    transformer.save_pretrained(output_dir / "transformer-final")
+                    return
+    finally:
+        progress.close()
 
     transformer.save_pretrained(output_dir / "transformer-final")
 

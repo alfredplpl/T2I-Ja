@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MethodType
+import warnings
 
 import torch
 from diffusers import DDPMScheduler, DPMSolverMultistepScheduler, PixArtSigmaPipeline, PixArtTransformer2DModel
@@ -57,6 +58,8 @@ def patch_qwen_vae_4d_image_io(vae) -> None:
     def decode_4d(self, z, *args, **kwargs):
         if z.ndim == 4:
             decoded = original_decode(z.unsqueeze(2), *args, **kwargs)
+            if isinstance(decoded, tuple) and decoded and torch.is_tensor(decoded[0]) and decoded[0].ndim == 5:
+                return (decoded[0].squeeze(2), *decoded[1:])
             if hasattr(decoded, "sample") and decoded.sample.ndim == 5:
                 decoded.sample = decoded.sample.squeeze(2)
             return decoded
@@ -101,10 +104,24 @@ class QwenTextConditioner:
         }
         if config.text.get("attn_implementation"):
             model_kwargs["attn_implementation"] = config.text["attn_implementation"]
-        self.text_encoder = AutoModel.from_pretrained(
-            name,
-            **model_kwargs,
-        ).to(device)
+        try:
+            self.text_encoder = AutoModel.from_pretrained(
+                name,
+                **model_kwargs,
+            ).to(device)
+        except Exception:
+            if "attn_implementation" not in model_kwargs:
+                raise
+            failed_attn = model_kwargs.pop("attn_implementation")
+            warnings.warn(
+                f"Failed to load text encoder with attn_implementation={failed_attn!r}; "
+                "falling back to the model default attention implementation.",
+                stacklevel=2,
+            )
+            self.text_encoder = AutoModel.from_pretrained(
+                name,
+                **model_kwargs,
+            ).to(device)
         self.text_encoder.eval()
         for parameter in self.text_encoder.parameters():
             parameter.requires_grad_(False)
