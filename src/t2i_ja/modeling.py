@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MethodType
 import warnings
 
 import torch
@@ -112,6 +113,8 @@ def build_pixart_sigma_pipeline(
         num_train_timesteps=int(config.scheduler["train_timesteps"]),
         shift=float(config.scheduler.get("shift", 1.0)),
     )
+    scheduler.init_noise_sigma = 1.0
+    scheduler.scale_model_input = MethodType(lambda self, sample, timestep=None: sample, scheduler)
     pipe = PixArtSigmaPipeline(
         tokenizer=None,
         text_encoder=None,
