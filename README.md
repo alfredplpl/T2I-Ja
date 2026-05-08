@@ -6,6 +6,7 @@ Minimal Text-to-Image training/inference scaffold using:
 - Text encoder: `Qwen/Qwen3.5-2B-Base`
 - DiT: Diffusers `PixArtTransformer2DModel`, configured as an approximately 2B-class transformer
 - Generation: Diffusers `PixArtSigmaPipeline` with Qwen prompt embeddings passed through `prompt_embeds`
+- Objective: Flow Matching velocity prediction with `FlowMatchEulerDiscreteScheduler`
 
 This repository starts from randomly initialized PixArt weights. It is a basic T2I implementation for training or smoke-testing the wiring, not a pretrained image generator.
 
@@ -174,7 +175,7 @@ uv run t2i-train \
   --output-dir outputs/basic-t2i
 ```
 
-Only the DiT/PixArt transformer is trained. The FLUX.2 klein VAE and Qwen text encoder are frozen.
+Only the DiT/PixArt transformer is trained. The FLUX.2 klein VAE and Qwen text encoder are frozen. Training uses Flow Matching: it samples `sigma`, builds `x_t = (1 - sigma) * x_0 + sigma * noise`, and trains the transformer to predict `noise - x_0`.
 
 Training uses aspect ratio bucketing by default. Images are assigned to the closest bucket, resized while preserving aspect ratio, then randomly cropped to the bucket resolution. Each batch contains images from one bucket, so `batch_size > 1` still works without padding.
 

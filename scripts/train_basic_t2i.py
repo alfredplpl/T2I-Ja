@@ -17,7 +17,7 @@ from torchvision.transforms import functional as TF
 from tqdm import tqdm
 
 from t2i_ja import build_transformer, load_config
-from t2i_ja.modeling import QwenTextConditioner, build_training_scheduler, load_vae
+from t2i_ja.modeling import QwenTextConditioner, load_vae, sample_flow_matching_training_inputs
 
 
 def round_down(value: int, multiple: int) -> int:
@@ -240,7 +240,6 @@ def main() -> None:
     )
     if train_config.get("gradient_checkpointing", False):
         transformer.enable_gradient_checkpointing()
-    scheduler = build_training_scheduler(config)
     optimizer = build_optimizer(transformer.parameters(), train_config)
     autocast_enabled = dtype is not torch.float32
 
@@ -259,15 +258,10 @@ def main() -> None:
                 with torch.no_grad():
                     latents = vae.encode(pixel_values).latent_dist.sample()
                     condition = text(prompts, device)
-                    noise = torch.randn_like(latents)
-                    timesteps = torch.randint(
-                        0,
-                        scheduler.config.num_train_timesteps,
-                        (latents.shape[0],),
-                        device=device,
-                        dtype=torch.long,
+                    noisy_latents, timesteps, target = sample_flow_matching_training_inputs(
+                        latents,
+                        int(config.scheduler["train_timesteps"]),
                     )
-                    noisy_latents = scheduler.add_noise(latents, noise, timesteps)
 
                 with torch.autocast(device_type=device.type, dtype=dtype, enabled=autocast_enabled):
                     prediction = transformer(
@@ -276,7 +270,7 @@ def main() -> None:
                         encoder_attention_mask=condition.attention_mask,
                         timestep=timesteps,
                     ).sample
-                loss = F.mse_loss(prediction.float(), noise.float()) / accumulation
+                loss = F.mse_loss(prediction.float(), target.float()) / accumulation
                 loss.backward()
 
                 optimizer_step = (global_step + 1) % accumulation == 0

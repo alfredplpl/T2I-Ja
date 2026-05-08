@@ -5,7 +5,7 @@ import warnings
 
 import torch
 import diffusers
-from diffusers import DDPMScheduler, DPMSolverMultistepScheduler, PixArtSigmaPipeline, PixArtTransformer2DModel
+from diffusers import FlowMatchEulerDiscreteScheduler, PixArtSigmaPipeline, PixArtTransformer2DModel
 from transformers import AutoModel, AutoTokenizer
 
 from .config import T2IConfig
@@ -108,10 +108,9 @@ def build_pixart_sigma_pipeline(
 ) -> PixArtSigmaPipeline:
     vae = load_vae(config, dtype=dtype, device=device)
     vae.eval().requires_grad_(False)
-    scheduler = DPMSolverMultistepScheduler(
+    scheduler = FlowMatchEulerDiscreteScheduler(
         num_train_timesteps=int(config.scheduler["train_timesteps"]),
-        beta_schedule=config.scheduler["beta_schedule"],
-        prediction_type="epsilon",
+        shift=float(config.scheduler.get("shift", 1.0)),
     )
     pipe = PixArtSigmaPipeline(
         tokenizer=None,
@@ -149,9 +148,14 @@ def encode_qwen_prompt(
     )
 
 
-def build_training_scheduler(config: T2IConfig) -> DDPMScheduler:
-    return DDPMScheduler(
-        num_train_timesteps=int(config.scheduler["train_timesteps"]),
-        beta_schedule=config.scheduler["beta_schedule"],
-        prediction_type="epsilon",
-    )
+def sample_flow_matching_training_inputs(
+    latents: torch.Tensor,
+    num_train_timesteps: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    noise = torch.randn_like(latents)
+    sigmas = torch.rand((latents.shape[0],), device=latents.device, dtype=latents.dtype)
+    broadcast_sigmas = sigmas.view(-1, *([1] * (latents.ndim - 1)))
+    noisy_latents = (1.0 - broadcast_sigmas) * latents + broadcast_sigmas * noise
+    target = noise - latents
+    timesteps = (sigmas * num_train_timesteps).long()
+    return noisy_latents, timesteps, target
