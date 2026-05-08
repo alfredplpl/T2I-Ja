@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MethodType
 
 import torch
 from diffusers import DDPMScheduler, DPMSolverMultistepScheduler, PixArtSigmaPipeline, PixArtTransformer2DModel
@@ -24,6 +25,7 @@ def load_qwen_image_vae(config: T2IConfig, dtype: torch.dtype, device: torch.dev
         torch_dtype=dtype,
     ).to(device)
     patch_qwen_vae_for_pixart_sigma(vae)
+    patch_qwen_vae_4d_image_io(vae)
     return vae
 
 
@@ -35,6 +37,34 @@ def patch_qwen_vae_for_pixart_sigma(vae) -> None:
         updates["scaling_factor"] = 1.0
     if updates:
         vae.register_to_config(**updates)
+
+
+def patch_qwen_vae_4d_image_io(vae) -> None:
+    if getattr(vae, "_t2i_ja_4d_image_io", False):
+        return
+
+    original_encode = vae.encode
+    original_decode = vae.decode
+
+    def encode_4d(self, x, *args, **kwargs):
+        if x.ndim == 4:
+            encoded = original_encode(x.unsqueeze(2), *args, **kwargs)
+            if hasattr(encoded, "latent_dist") and hasattr(encoded.latent_dist, "parameters"):
+                encoded.latent_dist.parameters = encoded.latent_dist.parameters.squeeze(2)
+            return encoded
+        return original_encode(x, *args, **kwargs)
+
+    def decode_4d(self, z, *args, **kwargs):
+        if z.ndim == 4:
+            decoded = original_decode(z.unsqueeze(2), *args, **kwargs)
+            if hasattr(decoded, "sample") and decoded.sample.ndim == 5:
+                decoded.sample = decoded.sample.squeeze(2)
+            return decoded
+        return original_decode(z, *args, **kwargs)
+
+    vae.encode = MethodType(encode_4d, vae)
+    vae.decode = MethodType(decode_4d, vae)
+    vae._t2i_ja_4d_image_io = True
 
 
 def build_transformer(config: T2IConfig) -> PixArtTransformer2DModel:

@@ -40,6 +40,21 @@ class JsonlImageTextDataset(Dataset):
         return {"pixel_values": self.transform(image), "text": sample["text"]}
 
 
+def build_optimizer(parameters, train_config: dict):
+    optimizer_name = train_config.get("optimizer", "adamw8bit")
+    learning_rate = float(train_config["learning_rate"])
+    if optimizer_name == "adamw8bit":
+        try:
+            import bitsandbytes as bnb
+        except ImportError as exc:
+            raise ImportError("optimizer=adamw8bit requires bitsandbytes. Run `uv sync`.") from exc
+
+        return bnb.optim.AdamW8bit(parameters, lr=learning_rate)
+    if optimizer_name == "adamw":
+        return torch.optim.AdamW(parameters, lr=learning_rate)
+    raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -72,9 +87,11 @@ def main() -> None:
     vae = load_qwen_image_vae(config, dtype=dtype, device=device)
     vae.eval().requires_grad_(False)
     text = QwenTextConditioner(config, dtype=dtype, device=device)
-    transformer = build_transformer(config).to(device=device)
+    transformer = build_transformer(config).to(device=device, dtype=dtype)
+    if train_config.get("gradient_checkpointing", False):
+        transformer.enable_gradient_checkpointing()
     scheduler = build_training_scheduler(config)
-    optimizer = torch.optim.AdamW(transformer.parameters(), lr=float(train_config["learning_rate"]))
+    optimizer = build_optimizer(transformer.parameters(), train_config)
     autocast_enabled = dtype is not torch.float32
 
     global_step = 0
@@ -86,6 +103,8 @@ def main() -> None:
             prompts = list(batch["text"])
             with torch.no_grad():
                 latents = vae.encode(pixel_values).latent_dist.sample()
+                if latents.ndim == 5:
+                    latents = latents.squeeze(2)
                 condition = text(prompts, device)
                 noise = torch.randn_like(latents)
                 timesteps = torch.randint(

@@ -29,10 +29,12 @@ scheduler:
   beta_schedule: squaredcos_cap_v2
 
 train:
+  optimizer: adamw8bit
   learning_rate: 0.0001
   batch_size: 1
   epochs: 1
   gradient_accumulation_steps: 1
+  gradient_checkpointing: true
   mixed_precision: bf16
   num_workers: 2
   save_every_steps: 1000
