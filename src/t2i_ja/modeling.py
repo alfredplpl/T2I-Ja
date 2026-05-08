@@ -1,73 +1,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MethodType
 import warnings
 
 import torch
+import diffusers
 from diffusers import DDPMScheduler, DPMSolverMultistepScheduler, PixArtSigmaPipeline, PixArtTransformer2DModel
 from transformers import AutoModel, AutoTokenizer
 
 from .config import T2IConfig
 
 
-def load_qwen_image_vae(config: T2IConfig, dtype: torch.dtype, device: torch.device):
+def load_vae(config: T2IConfig, dtype: torch.dtype, device: torch.device):
+    vae_class_name = config.models.get("vae_class", "AutoencoderKLFlux2")
     try:
-        from diffusers import AutoencoderKLQwenImage
-    except ImportError as exc:
+        vae_class = getattr(diffusers, vae_class_name)
+    except AttributeError as exc:
         raise ImportError(
-            "AutoencoderKLQwenImage is required. Install a recent diffusers build "
-            "with Qwen Image support."
+            f"{vae_class_name} is required. Install a recent diffusers build that includes it."
         ) from exc
 
-    vae = AutoencoderKLQwenImage.from_pretrained(
+    vae = vae_class.from_pretrained(
         config.models["vae_name"],
         subfolder=config.models.get("vae_subfolder", "vae"),
         torch_dtype=dtype,
     ).to(device)
-    patch_qwen_vae_for_pixart_sigma(vae)
-    patch_qwen_vae_4d_image_io(vae)
-    return vae
-
-
-def patch_qwen_vae_for_pixart_sigma(vae) -> None:
-    updates = {}
-    if not hasattr(vae.config, "block_out_channels"):
-        updates["block_out_channels"] = [1, 1, 1, 1]
     if not hasattr(vae.config, "scaling_factor"):
-        updates["scaling_factor"] = 1.0
-    if updates:
-        vae.register_to_config(**updates)
-
-
-def patch_qwen_vae_4d_image_io(vae) -> None:
-    if getattr(vae, "_t2i_ja_4d_image_io", False):
-        return
-
-    original_encode = vae.encode
-    original_decode = vae.decode
-
-    def encode_4d(self, x, *args, **kwargs):
-        if x.ndim == 4:
-            encoded = original_encode(x.unsqueeze(2), *args, **kwargs)
-            if hasattr(encoded, "latent_dist") and hasattr(encoded.latent_dist, "parameters"):
-                encoded.latent_dist.parameters = encoded.latent_dist.parameters.squeeze(2)
-            return encoded
-        return original_encode(x, *args, **kwargs)
-
-    def decode_4d(self, z, *args, **kwargs):
-        if z.ndim == 4:
-            decoded = original_decode(z.unsqueeze(2), *args, **kwargs)
-            if isinstance(decoded, tuple) and decoded and torch.is_tensor(decoded[0]) and decoded[0].ndim == 5:
-                return (decoded[0].squeeze(2), *decoded[1:])
-            if hasattr(decoded, "sample") and decoded.sample.ndim == 5:
-                decoded.sample = decoded.sample.squeeze(2)
-            return decoded
-        return original_decode(z, *args, **kwargs)
-
-    vae.encode = MethodType(encode_4d, vae)
-    vae.decode = MethodType(decode_4d, vae)
-    vae._t2i_ja_4d_image_io = True
+        vae.register_to_config(scaling_factor=float(config.models.get("vae_scaling_factor", 1.0)))
+    return vae
 
 
 def build_transformer(config: T2IConfig) -> PixArtTransformer2DModel:
@@ -146,7 +106,7 @@ def build_pixart_sigma_pipeline(
     dtype: torch.dtype,
     device: torch.device,
 ) -> PixArtSigmaPipeline:
-    vae = load_qwen_image_vae(config, dtype=dtype, device=device)
+    vae = load_vae(config, dtype=dtype, device=device)
     vae.eval().requires_grad_(False)
     scheduler = DPMSolverMultistepScheduler(
         num_train_timesteps=int(config.scheduler["train_timesteps"]),

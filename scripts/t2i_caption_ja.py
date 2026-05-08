@@ -14,7 +14,7 @@ from pathlib import Path
 def main() -> None:
     uv = shutil.which("uv")
     if uv is None:
-        raise RuntimeError("uv is required to run the Sarashina caption environment.")
+        raise RuntimeError("uv is required to run the Japanese caption environment.")
 
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "caption_sarashina_jsonl.py"
@@ -23,21 +23,12 @@ def main() -> None:
         uv,
         "run",
         "--no-project",
-        "--offline",
         "--python",
         str(repo_root / ".venv" / "bin" / "python"),
         "--with",
-        "transformers>=4.57.1",
+        "transformers==4.45.1",
         "--with",
-        "pillow",
-        "--with",
-        "protobuf",
-        "--with",
-        "sentencepiece",
-        "--with",
-        "accelerate",
-        "--with",
-        "tqdm",
+        "tokenizers==0.20.3",
         "python",
         str(script),
         *sys.argv[1:],

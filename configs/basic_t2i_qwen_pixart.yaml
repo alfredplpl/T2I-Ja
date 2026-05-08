@@ -1,11 +1,13 @@
 models:
-  vae_name: Qwen/Qwen-Image-2512
+  vae_name: black-forest-labs/FLUX.2-dev
   vae_subfolder: vae
+  vae_class: AutoencoderKLFlux2
+  vae_scaling_factor: 1.0
   text_encoder_name: Qwen/Qwen3.5-2B-Base
 
 image:
   resolution: 512
-  latent_channels: 16
+  latent_channels: 32
   latent_size: 64
 
 text:
@@ -16,8 +18,8 @@ text:
 transformer:
   sample_size: 64
   patch_size: 2
-  in_channels: 16
-  out_channels: 16
+  in_channels: 32
+  out_channels: 32
   num_layers: 40
   num_attention_heads: 16
   attention_head_dim: 128

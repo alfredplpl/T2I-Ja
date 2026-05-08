@@ -13,7 +13,7 @@ from torchvision import transforms
 from tqdm import tqdm
 
 from t2i_ja import build_transformer, load_config
-from t2i_ja.modeling import QwenTextConditioner, build_training_scheduler, load_qwen_image_vae
+from t2i_ja.modeling import QwenTextConditioner, build_training_scheduler, load_vae
 
 
 class JsonlImageTextDataset(Dataset):
@@ -89,7 +89,7 @@ def main() -> None:
         num_workers=int(train_config["num_workers"]),
     )
 
-    vae = load_qwen_image_vae(config, dtype=dtype, device=device)
+    vae = load_vae(config, dtype=dtype, device=device)
     vae.eval().requires_grad_(False)
     text = QwenTextConditioner(config, dtype=dtype, device=device)
     transformer = build_transformer(config).to(device=device, dtype=dtype)
@@ -113,8 +113,6 @@ def main() -> None:
                 prompts = list(batch["text"])
                 with torch.no_grad():
                     latents = vae.encode(pixel_values).latent_dist.sample()
-                    if latents.ndim == 5:
-                        latents = latents.squeeze(2)
                     condition = text(prompts, device)
                     noise = torch.randn_like(latents)
                     timesteps = torch.randint(

@@ -2,7 +2,7 @@
 
 Minimal Text-to-Image training/inference scaffold using:
 
-- VAE: `Qwen/Qwen-Image-2512`, subfolder `vae`
+- VAE: `black-forest-labs/FLUX.2-dev`, subfolder `vae`
 - Text encoder: `Qwen/Qwen3.5-2B-Base`
 - DiT: Diffusers `PixArtTransformer2DModel`, configured as an approximately 2B-class transformer
 - Generation: Diffusers `PixArtSigmaPipeline` with Qwen prompt embeddings passed through `prompt_embeds`
@@ -19,7 +19,7 @@ The default DiT config uses 40 layers with hidden size 2048 (`16 heads x 128 dim
 uv sync
 ```
 
-`Qwen/Qwen-Image-2512` uses `AutoencoderKLQwenImage`, so use a recent Diffusers build that includes Qwen Image support.
+The FLUX.2 VAE uses `AutoencoderKLFlux2`, so use Diffusers 0.37.0 or newer. The FLUX.2 repository is gated on Hugging Face; accept the model terms and make sure your environment has access before training or inference.
 
 This project is configured for PyTorch CUDA 12.8 wheels on Linux and Windows via uv:
 
@@ -116,7 +116,7 @@ uv run --no-project \
 
 ## Japanese Caption Images
 
-Generate Japanese captions with `sbintuitions/sarashina2.2-vision-3b`:
+Generate Japanese captions with `MIL-UT/Asagi-2B`:
 
 ```bash
 uv run t2i-caption-ja \
@@ -129,7 +129,7 @@ uv run t2i-caption-ja \
 The default prompt is:
 
 ```text
-この画像を日本語で説明してください。
+この画像を見て、次の指示に詳細かつ具体的に答えてください。この写真の内容について詳しく教えてください。
 ```
 
 The output format is the same training JSONL format:
@@ -141,9 +141,11 @@ The output format is the same training JSONL format:
 Useful options:
 
 - `--prompt`: Japanese instruction prompt
-- `--model`: model id, default `sbintuitions/sarashina2.2-vision-3b`
+- `--model`: model id, default `MIL-UT/Asagi-2B`
+- `--backend`: `auto`, `asagi`, or `sarashina`; default `auto`
 - `--device-map`: model placement, default `cuda`
 - `--dtype`: `auto`, `fp32`, `fp16`, or `bf16`; default `auto`
+- `--attn-implementation`: optional attention backend override for model loading
 - `--max-new-tokens`: generation length limit, default `256`
 - `--temperature`: default `0.7`
 - `--top-p`: default `0.95`
@@ -153,19 +155,7 @@ Useful options:
 
 Progress is shown with `tqdm`, and per-image filenames and generated captions are not printed during normal runs.
 
-The Sarashina runner uses the project's existing Python environment with `transformers>=4.57.1` overlaid through uv and hides `flash_attn` during captioning. This avoids failures from incompatible local FlashAttention binaries while keeping the main Qwen/PixArt environment unchanged. If the overlay environment has never been cached, prime it once while online:
-
-```bash
-uv run --no-project \
-  --python .venv/bin/python \
-  --with "transformers>=4.57.1" \
-  --with pillow \
-  --with protobuf \
-  --with sentencepiece \
-  --with accelerate \
-  --with tqdm \
-  python -c "import transformers, torch; print(transformers.__version__, torch.__version__)"
-```
+The Japanese caption runner overlays `transformers==4.45.1` and `tokenizers==0.20.3` only for this command, matching the Asagi model card while leaving the main Qwen/PixArt `torch` and `torchvision` environment unchanged. To use the previous Sarashina model, pass `--model sbintuitions/sarashina2.2-vision-3b --backend sarashina`.
 
 ## Train
 
@@ -184,7 +174,7 @@ uv run t2i-train \
   --output-dir outputs/basic-t2i
 ```
 
-Only the DiT/PixArt transformer is trained. The Qwen Image VAE and Qwen text encoder are frozen.
+Only the DiT/PixArt transformer is trained. The FLUX.2 VAE and Qwen text encoder are frozen.
 
 ## Infer
 
