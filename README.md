@@ -29,6 +29,12 @@ uv sync
 
 The CUDA wheel index is `https://download.pytorch.org/whl/cu128`. On macOS, uv falls back to PyPI because CUDA wheels are not available there.
 
+FlashAttention is optional. Install it only for Qwen/PixArt training or inference runs that need `attn_implementation: flash_attention_2`:
+
+```bash
+uv sync --group flash-attn
+```
+
 FlashAttention is installed from the GitHub release asset for v2.8.3, not built from PyPI:
 
 ```text
@@ -44,7 +50,7 @@ The Qwen text encoder is configured with `attn_implementation: flash_attention_2
 Generate a training JSONL from an image directory with Florence-2:
 
 ```bash
-uv run t2i-caption \
+uv run --script scripts/t2i_caption.py \
   --image-dir /path/to/images \
   --output train.jsonl \
   --recursive \
@@ -75,10 +81,12 @@ Useful options:
 - `--square-pad-color`: RGB padding color value, default `255`
 - `--continue-on-error`: skip unreadable or failed images
 
+Progress is shown with `tqdm`, including elapsed time, images per second, and estimated remaining time. Per-image filenames and generated captions are not printed during normal runs.
+
 By default, image paths are absolute. To write portable relative paths:
 
 ```bash
-uv run t2i-caption \
+uv run --script scripts/t2i_caption.py \
   --image-dir /data/images \
   --output train.jsonl \
   --recursive \
@@ -91,7 +99,20 @@ This writes paths like `images/example.png`.
 
 The script keeps `trust_remote_code=True` because the Microsoft Florence-2 repository still relies on custom processor/model code for this workflow. It also installs a small compatibility shim for newer `transformers` versions where the Florence-2 remote config/tokenizer code can otherwise fail with missing `forced_bos_token_id` or `additional_special_tokens` attributes. Florence-2 defaults to `--attn-implementation eager` because the remote model class does not expose the SDPA support flags expected by newer `transformers` releases. Generation runs with `use_cache=False` to avoid the newer `EncoderDecoderCache` API that the Florence-2 remote generation code does not support.
 
-`t2i-caption` automatically re-runs itself in an isolated uv environment with `transformers==4.51.3`, `torch==2.8.0`, and CUDA 12.8 wheels. This keeps Florence-2's older remote code compatible without downgrading the main T2I environment used by Qwen/PixArt.
+`scripts/t2i_caption.py` automatically re-runs the captioner with the project's existing Python environment plus `transformers==4.51.3` as an overlay. It uses `--no-project`, so captioning does not try to sync the main project dependencies or download the optional `flash-attn` wheel. This keeps Florence-2's older remote code compatible without downgrading the main T2I environment used by Qwen/PixArt.
+
+The runner also uses uv's offline cache for the overlay environment to avoid touching the network during captioning. If the Florence caption environment has never been cached on the machine, prime it once while online:
+
+```bash
+uv run --no-project \
+  --python .venv/bin/python \
+  --with transformers==4.51.3 \
+  --with pillow \
+  --with timm \
+  --with einops \
+  --with tqdm \
+  python -c "import transformers, torch; print(transformers.__version__, torch.__version__)"
+```
 
 ## Train
 

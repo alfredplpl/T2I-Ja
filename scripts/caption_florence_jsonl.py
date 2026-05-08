@@ -2,17 +2,35 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import torch
 from PIL import Image, ImageOps
-from transformers import AutoModelForCausalLM, AutoProcessor
-from transformers.configuration_utils import PretrainedConfig
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from tqdm import tqdm
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+ORIGINAL_FIND_SPEC = importlib.util.find_spec
+
+
+def block_flash_attn_for_captioning() -> None:
+    if getattr(importlib.util, "_t2i_ja_flash_attn_blocked", False):
+        return
+
+    def find_spec_without_flash_attn(name, package=None):
+        if name == "flash_attn" or name.startswith("flash_attn."):
+            return None
+        if name == "flash_attn_2_cuda":
+            return None
+        return ORIGINAL_FIND_SPEC(name, package)
+
+    sys.modules.pop("flash_attn", None)
+    sys.modules.pop("flash_attn_2_cuda", None)
+    importlib.util.find_spec = find_spec_without_flash_attn
+    importlib.util._t2i_ja_flash_attn_blocked = True
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,6 +73,8 @@ def square_pad_image(image: Image.Image, color: int) -> Image.Image:
 def install_florence2_compatibility_shims() -> None:
     import transformers
     from packaging.version import Version
+    from transformers.configuration_utils import PretrainedConfig
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
     if Version(transformers.__version__) < Version("4.57"):
         return
@@ -189,7 +209,10 @@ def main() -> None:
     if output.exists() and not args.overwrite:
         raise FileExistsError(f"{output} already exists. Pass --overwrite to replace it.")
 
+    block_flash_attn_for_captioning()
     install_florence2_compatibility_shims()
+    from transformers import AutoModelForCausalLM, AutoProcessor
+
     device = torch.device(args.device)
     dtype = resolve_dtype(args.dtype, device)
     processor = AutoProcessor.from_pretrained(
@@ -213,8 +236,9 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     relative_to = Path(args.relative_to) if args.relative_to else None
 
+    progress = tqdm(images, desc="Captioning", unit="image", dynamic_ncols=True)
     with output.open("w", encoding="utf-8") as f:
-        for index, image_path in enumerate(images, start=1):
+        for image_path in progress:
             try:
                 text = caption_image(
                     image_path=image_path,
@@ -234,11 +258,10 @@ def main() -> None:
                 }
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
                 f.flush()
-                print(f"[{index}/{len(images)}] {image_path} -> {text}")
             except Exception as exc:
                 if not args.continue_on_error:
                     raise
-                print(f"[{index}/{len(images)}] failed: {image_path}: {exc}")
+                tqdm.write(f"failed: {image_path}: {exc}")
 
 
 if __name__ == "__main__":

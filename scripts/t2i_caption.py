@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 from __future__ import annotations
 
 import os
@@ -9,9 +14,9 @@ from pathlib import Path
 def main() -> None:
     uv = shutil.which("uv")
     if uv is None:
-        raise RuntimeError("uv is required to run t2i-caption in its isolated Florence-2 environment.")
+        raise RuntimeError("uv is required to run the isolated Florence-2 caption environment.")
 
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "scripts" / "caption_florence_jsonl.py"
     env = os.environ.copy()
     command = [
