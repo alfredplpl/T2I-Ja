@@ -27,6 +27,7 @@ t2i-train = "t2i_ja.cli.train:main"
 t2i-infer = "t2i_ja.cli.infer:main"
 t2i-export-pipeline = "t2i_ja.cli.export_pipeline:main"
 t2i-caption = "t2i_ja.cli.caption:main"
+t2i-caption-ja = "t2i_ja.cli.caption_ja:main"
 
 [dependency-groups]
 dev = [

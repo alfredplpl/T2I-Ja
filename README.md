@@ -114,6 +114,59 @@ uv run --no-project \
   python -c "import transformers, torch; print(transformers.__version__, torch.__version__)"
 ```
 
+## Japanese Caption Images
+
+Generate Japanese captions with `sbintuitions/sarashina2.2-vision-3b`:
+
+```bash
+uv run t2i-caption-ja \
+  --image-dir /path/to/images \
+  --output train_ja.jsonl \
+  --recursive \
+  --overwrite
+```
+
+The default prompt is:
+
+```text
+この画像を日本語で説明してください。
+```
+
+The output format is the same training JSONL format:
+
+```json
+{"image": "/path/to/image.webp", "text": "水槽が木製の机の上に置かれている写真です。..."}
+```
+
+Useful options:
+
+- `--prompt`: Japanese instruction prompt
+- `--model`: model id, default `sbintuitions/sarashina2.2-vision-3b`
+- `--device-map`: model placement, default `cuda`
+- `--dtype`: `auto`, `fp32`, `fp16`, or `bf16`; default `auto`
+- `--max-new-tokens`: generation length limit, default `256`
+- `--temperature`: default `0.7`
+- `--top-p`: default `0.95`
+- `--repetition-penalty`: default `1.2`
+- `--do-sample` / `--no-do-sample`: sampling mode, default enabled
+- `--recursive`, `--limit`, `--path-mode`, `--relative-to`, `--overwrite`, `--continue-on-error`: same behavior as the Florence caption command
+
+Progress is shown with `tqdm`, and per-image filenames and generated captions are not printed during normal runs.
+
+The Sarashina runner uses the project's existing Python environment with `transformers>=4.57.1` overlaid through uv and hides `flash_attn` during captioning. This avoids failures from incompatible local FlashAttention binaries while keeping the main Qwen/PixArt environment unchanged. If the overlay environment has never been cached, prime it once while online:
+
+```bash
+uv run --no-project \
+  --python .venv/bin/python \
+  --with "transformers>=4.57.1" \
+  --with pillow \
+  --with protobuf \
+  --with sentencepiece \
+  --with accelerate \
+  --with tqdm \
+  python -c "import transformers, torch; print(transformers.__version__, torch.__version__)"
+```
+
 ## Train
 
 Use a JSONL file with one sample per line:
