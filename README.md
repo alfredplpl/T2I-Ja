@@ -2,7 +2,7 @@
 
 Minimal Text-to-Image training/inference scaffold using:
 
-- VAE: `black-forest-labs/FLUX.2-dev`, subfolder `vae`
+- VAE: `black-forest-labs/FLUX.2-klein-base-4B`, subfolder `vae`
 - Text encoder: `Qwen/Qwen3.5-2B-Base`
 - DiT: Diffusers `PixArtTransformer2DModel`, configured as an approximately 2B-class transformer
 - Generation: Diffusers `PixArtSigmaPipeline` with Qwen prompt embeddings passed through `prompt_embeds`
@@ -19,7 +19,7 @@ The default DiT config uses 40 layers with hidden size 2048 (`16 heads x 128 dim
 uv sync
 ```
 
-The FLUX.2 VAE uses `AutoencoderKLFlux2`, so use Diffusers 0.37.0 or newer. The FLUX.2 repository is gated on Hugging Face; accept the model terms and make sure your environment has access before training or inference.
+The FLUX.2 klein VAE uses `AutoencoderKLFlux2`, so use Diffusers 0.37.0 or newer. `black-forest-labs/FLUX.2-klein-base-4B` is Apache-2.0 licensed on Hugging Face.
 
 This project is configured for PyTorch CUDA 12.8 wheels on Linux and Windows via uv:
 
@@ -174,7 +174,7 @@ uv run t2i-train \
   --output-dir outputs/basic-t2i
 ```
 
-Only the DiT/PixArt transformer is trained. The FLUX.2 VAE and Qwen text encoder are frozen.
+Only the DiT/PixArt transformer is trained. The FLUX.2 klein VAE and Qwen text encoder are frozen.
 
 ## Infer
 

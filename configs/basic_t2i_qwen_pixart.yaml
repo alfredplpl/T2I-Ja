@@ -1,5 +1,5 @@
 models:
-  vae_name: black-forest-labs/FLUX.2-dev
+  vae_name: black-forest-labs/FLUX.2-klein-base-4B
   vae_subfolder: vae
   vae_class: AutoencoderKLFlux2
   vae_scaling_factor: 1.0
