@@ -3,26 +3,77 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import random
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+from diffusers import PixArtTransformer2DModel
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import BatchSampler, DataLoader, Dataset
 from torchvision import transforms
+from torchvision.transforms import functional as TF
 from tqdm import tqdm
 
 from t2i_ja import build_transformer, load_config
 from t2i_ja.modeling import QwenTextConditioner, build_training_scheduler, load_vae
 
 
+def round_down(value: int, multiple: int) -> int:
+    return value - value % multiple
+
+
+def generate_aspect_buckets(
+    base_resolution: int,
+    max_area: int | None = None,
+    max_dim: int | None = None,
+    min_dim: int = 256,
+    step: int = 64,
+) -> list[tuple[int, int]]:
+    max_area = max_area or base_resolution * base_resolution
+    max_dim = max_dim or base_resolution * 2
+    buckets = {(base_resolution, base_resolution)}
+
+    for width in range(min_dim, max_dim + 1, step):
+        height = min(max_dim, max_area // width)
+        height = round_down(height, step)
+        if height >= min_dim:
+            buckets.add((height, width))
+            buckets.add((width, height))
+
+    return sorted(buckets, key=lambda size: size[1] / size[0])
+
+
+def resize_random_crop_to_bucket(image: Image.Image, bucket_size: tuple[int, int]) -> torch.Tensor:
+    bucket_height, bucket_width = bucket_size
+    width, height = image.size
+    scale = max(bucket_width / width, bucket_height / height)
+    resized_width = math.ceil(width * scale)
+    resized_height = math.ceil(height * scale)
+    image = TF.resize(
+        image,
+        [resized_height, resized_width],
+        interpolation=transforms.InterpolationMode.BICUBIC,
+    )
+    top = 0 if resized_height == bucket_height else random.randint(0, resized_height - bucket_height)
+    left = 0 if resized_width == bucket_width else random.randint(0, resized_width - bucket_width)
+    image = TF.crop(image, top, left, bucket_height, bucket_width)
+    tensor = TF.to_tensor(image)
+    return TF.normalize(tensor, [0.5], [0.5])
+
+
 class JsonlImageTextDataset(Dataset):
-    def __init__(self, path: str, resolution: int) -> None:
+    def __init__(self, path: str, resolution: int, bucket_config: dict | None = None) -> None:
         self.samples = []
         with Path(path).open("r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     self.samples.append(json.loads(line))
+        self.bucket_config = bucket_config or {}
+        self.buckets: list[tuple[int, int]] = []
+        self.sample_buckets: list[int] = []
+        self.bucket_to_indices: dict[int, list[int]] = {}
         self.transform = transforms.Compose(
             [
                 transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BICUBIC),
@@ -31,6 +82,36 @@ class JsonlImageTextDataset(Dataset):
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
+        if self.bucket_config.get("enabled", False):
+            self._assign_buckets(resolution)
+
+    def _assign_buckets(self, resolution: int) -> None:
+        self.buckets = generate_aspect_buckets(
+            base_resolution=resolution,
+            max_area=self.bucket_config.get("max_area"),
+            max_dim=self.bucket_config.get("max_dim"),
+            min_dim=int(self.bucket_config.get("min_dim", 256)),
+            step=int(self.bucket_config.get("step", 64)),
+        )
+        bucket_aspects = [width / height for height, width in self.buckets]
+        max_aspect_error = self.bucket_config.get("max_aspect_error")
+        kept_samples = []
+        for sample in self.samples:
+            with Image.open(sample["image"]) as image:
+                width, height = image.size
+            aspect = width / height
+            bucket_index, aspect_error = min(
+                enumerate(abs(bucket_aspect - aspect) for bucket_aspect in bucket_aspects),
+                key=lambda item: item[1],
+            )
+            if max_aspect_error is not None and aspect_error > float(max_aspect_error):
+                continue
+            kept_samples.append(sample)
+            self.sample_buckets.append(bucket_index)
+            self.bucket_to_indices.setdefault(bucket_index, []).append(len(kept_samples) - 1)
+        self.samples = kept_samples
+        if not self.samples:
+            raise ValueError("No training samples remain after aspect ratio bucket assignment.")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -38,7 +119,40 @@ class JsonlImageTextDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, torch.Tensor | str]:
         sample = self.samples[index]
         image = Image.open(sample["image"]).convert("RGB")
-        return {"pixel_values": self.transform(image), "text": sample["text"]}
+        if self.bucket_config.get("enabled", False):
+            bucket = self.buckets[self.sample_buckets[index]]
+            pixel_values = resize_random_crop_to_bucket(image, bucket)
+        else:
+            pixel_values = self.transform(image)
+        return {"pixel_values": pixel_values, "text": sample["text"]}
+
+
+class AspectRatioBucketBatchSampler(BatchSampler):
+    def __init__(self, dataset: JsonlImageTextDataset, batch_size: int, drop_last: bool = True) -> None:
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+
+    def __iter__(self):
+        batches = []
+        for indices in self.dataset.bucket_to_indices.values():
+            shuffled = list(indices)
+            random.shuffle(shuffled)
+            for start in range(0, len(shuffled), self.batch_size):
+                batch = shuffled[start : start + self.batch_size]
+                if len(batch) == self.batch_size or not self.drop_last:
+                    batches.append(batch)
+        random.shuffle(batches)
+        yield from batches
+
+    def __len__(self) -> int:
+        count = 0
+        for indices in self.dataset.bucket_to_indices.values():
+            if self.drop_last:
+                count += len(indices) // self.batch_size
+            else:
+                count += math.ceil(len(indices) / self.batch_size)
+        return count
 
 
 def build_optimizer(parameters, train_config: dict):
@@ -60,6 +174,14 @@ def first_learning_rate(optimizer) -> float:
     return float(optimizer.param_groups[0]["lr"])
 
 
+def load_or_build_transformer(config, dtype: torch.dtype, device: torch.device, resume_transformer: str | None):
+    if resume_transformer is None:
+        transformer = build_transformer(config)
+    else:
+        transformer = PixArtTransformer2DModel.from_pretrained(resume_transformer, torch_dtype=dtype)
+    return transformer.to(device=device, dtype=dtype)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -68,6 +190,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=["fp32", "fp16", "bf16"], default=None)
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--resume-transformer", default=None)
     return parser.parse_args()
 
 
@@ -81,18 +204,40 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset = JsonlImageTextDataset(args.data, int(config.image["resolution"]))
-    loader = DataLoader(
-        dataset,
-        batch_size=int(train_config["batch_size"]),
-        shuffle=True,
-        num_workers=int(train_config["num_workers"]),
+    batch_size = int(train_config["batch_size"])
+    dataset = JsonlImageTextDataset(
+        args.data,
+        int(config.image["resolution"]),
+        bucket_config=train_config.get("aspect_ratio_bucketing"),
     )
+    if train_config.get("aspect_ratio_bucketing", {}).get("enabled", False):
+        bucket_config = train_config["aspect_ratio_bucketing"]
+        loader = DataLoader(
+            dataset,
+            batch_sampler=AspectRatioBucketBatchSampler(
+                dataset,
+                batch_size=batch_size,
+                drop_last=bool(bucket_config.get("drop_last", False)),
+            ),
+            num_workers=int(train_config["num_workers"]),
+        )
+    else:
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=int(train_config["num_workers"]),
+        )
 
     vae = load_vae(config, dtype=dtype, device=device)
     vae.eval().requires_grad_(False)
     text = QwenTextConditioner(config, dtype=dtype, device=device)
-    transformer = build_transformer(config).to(device=device, dtype=dtype)
+    transformer = load_or_build_transformer(
+        config,
+        dtype=dtype,
+        device=device,
+        resume_transformer=args.resume_transformer,
+    )
     if train_config.get("gradient_checkpointing", False):
         transformer.enable_gradient_checkpointing()
     scheduler = build_training_scheduler(config)

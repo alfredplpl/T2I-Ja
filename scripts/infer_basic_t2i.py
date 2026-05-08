@@ -19,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--guidance-scale", type=float, default=4.5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--height", type=int, default=None)
+    parser.add_argument("--width", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=["fp32", "fp16", "bf16"], default="bf16")
     return parser.parse_args()
@@ -38,6 +40,8 @@ def main() -> None:
         device=device,
     )
     generator = torch.Generator(device=device).manual_seed(args.seed)
+    height = args.height or int(config.image["resolution"])
+    width = args.width or int(config.image["resolution"])
     image = pipeline(
         prompt=None,
         negative_prompt=None,
@@ -45,8 +49,8 @@ def main() -> None:
         prompt_attention_mask=prompt_mask,
         negative_prompt_embeds=negative_embeds,
         negative_prompt_attention_mask=negative_mask,
-        height=int(config.image["resolution"]),
-        width=int(config.image["resolution"]),
+        height=height,
+        width=width,
         num_inference_steps=args.steps,
         guidance_scale=args.guidance_scale,
         use_resolution_binning=False,

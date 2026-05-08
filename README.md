@@ -176,6 +176,44 @@ uv run t2i-train \
 
 Only the DiT/PixArt transformer is trained. The FLUX.2 klein VAE and Qwen text encoder are frozen.
 
+Training uses aspect ratio bucketing by default. Images are assigned to the closest bucket, resized while preserving aspect ratio, then randomly cropped to the bucket resolution. Each batch contains images from one bucket, so `batch_size > 1` still works without padding.
+
+The default buckets follow the NovelAI-style setup with a `512 * 768` pixel budget, maximum dimension `1024`, minimum dimension `256`, and `64` pixel steps:
+
+```yaml
+train:
+  aspect_ratio_bucketing:
+    enabled: true
+    max_area: 393216
+    max_dim: 1024
+    min_dim: 256
+    step: 64
+    drop_last: false
+```
+
+Set `enabled: false` to return to the previous square `Resize + CenterCrop` preprocessing.
+
+To train progressively, run separate stages and resume only the transformer weights while changing the config resolution and bucket budget. The optimizer is intentionally re-created for each stage.
+
+```bash
+uv run t2i-train \
+  --config configs/stage_256.yaml \
+  --data train.jsonl \
+  --output-dir outputs/basic-t2i-256
+
+uv run t2i-train \
+  --config configs/stage_512.yaml \
+  --data train.jsonl \
+  --output-dir outputs/basic-t2i-512 \
+  --resume-transformer outputs/basic-t2i-256/transformer-final
+
+uv run t2i-train \
+  --config configs/stage_1024.yaml \
+  --data train.jsonl \
+  --output-dir outputs/basic-t2i-1024 \
+  --resume-transformer outputs/basic-t2i-512/transformer-final
+```
+
 ## Infer
 
 After training:
@@ -185,6 +223,8 @@ uv run t2i-infer \
   --config configs/basic_t2i_qwen_pixart.yaml \
   --checkpoint outputs/basic-t2i/transformer-final \
   --prompt "東京の夜景、水彩画" \
+  --height 768 \
+  --width 512 \
   --output outputs/sample.png
 ```
 
