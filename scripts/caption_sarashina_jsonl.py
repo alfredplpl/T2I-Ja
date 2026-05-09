@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import MethodType
 
 import torch
 from PIL import Image
@@ -34,34 +34,14 @@ def block_flash_attn_for_captioning() -> None:
     importlib.util._t2i_ja_flash_attn_blocked = True
 
 
-def patch_huggingface_hub_strict_dataclass_for_sarashina() -> None:
-    try:
-        import huggingface_hub.dataclasses as hub_dataclasses
-    except ImportError:
-        return
-    if getattr(hub_dataclasses, "_t2i_ja_sarashina_patched", False):
-        return
-
-    original_type_validator = hub_dataclasses.type_validator
-
-    def type_validator(name, value, expected_type):
-        if name == "mlp_ratio" and expected_type is int and isinstance(value, float):
-            return
-        return original_type_validator(name, value, expected_type)
-
-    hub_dataclasses.type_validator = type_validator
-    hub_dataclasses._t2i_ja_sarashina_patched = True
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image-dir", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--model", default="MIL-UT/Asagi-2B")
-    parser.add_argument("--backend", choices=["auto", "asagi", "sarashina"], default="auto")
     parser.add_argument(
         "--prompt",
-        default="この画像を見て、次の指示に詳細かつ具体的に答えてください。この写真の内容について詳しく教えてください。",
+        default="簡潔に説明してください。",
     )
     parser.add_argument("--device-map", default="cuda")
     parser.add_argument("--dtype", choices=["auto", "fp32", "fp16", "bf16"], default="auto")
@@ -73,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--do-sample", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--preprocess-workers", type=int, default=0)
+    parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--path-mode", choices=["absolute", "relative"], default="absolute")
     parser.add_argument("--relative-to", default=None)
     parser.add_argument("--overwrite", action="store_true")
@@ -120,84 +102,60 @@ def model_device(model) -> torch.device:
     return next(model.parameters()).device
 
 
-def infer_backend(model_name: str, backend: str) -> str:
-    if backend != "auto":
-        return backend
-    if "sarashina" in model_name.lower():
-        return "sarashina"
-    return "asagi"
-
-
-def patch_sarashina_generation_cache_position(model) -> None:
-    if getattr(model, "_t2i_ja_cache_position_patched", False):
-        return
-
-    original_prepare = model.prepare_inputs_for_generation
-
-    def prepare_inputs_for_generation_with_cache_position(self, input_ids, *args, cache_position=None, **kwargs):
-        if cache_position is None:
-            cache_position = torch.arange(input_ids.shape[1], device=input_ids.device)
-        return original_prepare(input_ids, *args, cache_position=cache_position, **kwargs)
-
-    model.prepare_inputs_for_generation = MethodType(prepare_inputs_for_generation_with_cache_position, model)
-    model._t2i_ja_cache_position_patched = True
-
-
-def caption_image_sarashina(
-    image_path: Path,
-    prompt: str,
-    processor,
-    model,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    repetition_penalty: float,
-    do_sample: bool,
-) -> str:
-    image = Image.open(image_path).convert("RGB")
-    message = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": str(image_path)},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
-    text_prompt = processor.apply_chat_template(message, add_generation_prompt=True)
-    inputs = processor(
-        text=[text_prompt],
-        images=[image],
-        padding=True,
-        return_tensors="pt",
-    ).to(model_device(model))
-    output_ids = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        repetition_penalty=repetition_penalty,
-        do_sample=do_sample,
-        use_cache=False,
-    )
-    generated_ids = [
-        output_ids[len(input_ids) :]
-        for input_ids, output_ids in zip(inputs.input_ids, output_ids, strict=True)
-    ]
-    output_text = processor.batch_decode(
-        generated_ids,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False,
-    )
-    return output_text[0].strip()
-
-
 def build_asagi_prompt(prompt: str) -> str:
     return (
         "以下は、タスクを説明する指示です。要求を適切に満たす応答を書きなさい。\n\n"
         f"### 指示:\n<image>\n{prompt}\n\n"
         "### 応答:\n"
     )
+
+
+def load_rgb_image(image_path: Path) -> Image.Image:
+    return Image.open(image_path).convert("RGB")
+
+
+def preprocess_asagi_inputs(image_path: Path, prompt: str, processor):
+    image = load_rgb_image(image_path)
+    text_prompt = build_asagi_prompt(prompt)
+    inputs = processor(text=text_prompt, images=image, return_tensors="pt")
+    tokenized = processor.tokenizer(text_prompt, return_tensors="pt")
+    inputs["input_ids"] = tokenized["input_ids"]
+    inputs["attention_mask"] = tokenized["attention_mask"]
+    return text_prompt, inputs
+
+
+def iter_preprocessed_asagi_inputs(
+    image_paths: list[Path],
+    prompt: str,
+    processor,
+    workers: int,
+    prefetch_factor: int,
+):
+    if workers <= 0:
+        for image_path in image_paths:
+            try:
+                yield image_path, preprocess_asagi_inputs(image_path, prompt, processor), None
+            except Exception as exc:
+                yield image_path, None, exc
+        return
+
+    max_pending = max(1, workers * max(1, prefetch_factor))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending = {}
+        submit_index = 0
+        for output_index, image_path in enumerate(image_paths):
+            while submit_index < len(image_paths) and len(pending) < max_pending:
+                pending[submit_index] = executor.submit(
+                    preprocess_asagi_inputs,
+                    image_paths[submit_index],
+                    prompt,
+                    processor,
+                )
+                submit_index += 1
+            try:
+                yield image_path, pending.pop(output_index).result(), None
+            except Exception as exc:
+                yield image_path, None, exc
 
 
 def caption_image_asagi(
@@ -210,13 +168,12 @@ def caption_image_asagi(
     top_p: float,
     repetition_penalty: float,
     do_sample: bool,
+    preprocessed=None,
 ) -> str:
-    image = Image.open(image_path).convert("RGB")
-    text_prompt = build_asagi_prompt(prompt)
-    inputs = processor(text=text_prompt, images=image, return_tensors="pt")
-    tokenized = processor.tokenizer(text_prompt, return_tensors="pt")
-    inputs["input_ids"] = tokenized["input_ids"]
-    inputs["attention_mask"] = tokenized["attention_mask"]
+    if preprocessed is None:
+        text_prompt, inputs = preprocess_asagi_inputs(image_path, prompt, processor)
+    else:
+        text_prompt, inputs = preprocessed
     inputs = {
         key: value.to(
             dtype=model.dtype if value.dtype == torch.float32 else value.dtype,
@@ -253,19 +210,13 @@ def main() -> None:
         raise FileExistsError(f"{output} already exists. Pass --overwrite to replace it.")
 
     block_flash_attn_for_captioning()
-    backend = infer_backend(args.model, args.backend)
-    if backend == "sarashina":
-        patch_huggingface_hub_strict_dataclass_for_sarashina()
-    from transformers import AutoModel, AutoModelForCausalLM, AutoProcessor, set_seed
+    from transformers import AutoModel, AutoProcessor, set_seed
 
     processor = AutoProcessor.from_pretrained(args.model, trust_remote_code=True)
-    model_class = AutoModelForCausalLM if backend == "sarashina" else AutoModel
-    model = model_class.from_pretrained(
+    model = AutoModel.from_pretrained(
         args.model,
         **model_load_kwargs(args),
     )
-    if backend == "sarashina":
-        patch_sarashina_generation_cache_position(model)
     model.eval()
     set_seed(42)
 
@@ -274,13 +225,21 @@ def main() -> None:
         images = images[: args.limit]
     output.parent.mkdir(parents=True, exist_ok=True)
     relative_to = Path(args.relative_to) if args.relative_to else None
-    caption_image = caption_image_sarashina if backend == "sarashina" else caption_image_asagi
 
-    progress = tqdm(images, desc="Captioning ja", unit="image", dynamic_ncols=True)
     with output.open("w", encoding="utf-8") as f:
-        for image_path in progress:
+        image_iter = iter_preprocessed_asagi_inputs(
+            images,
+            args.prompt,
+            processor,
+            args.preprocess_workers,
+            args.prefetch_factor,
+        )
+        progress = tqdm(image_iter, total=len(images), desc="Captioning ja", unit="image", dynamic_ncols=True)
+        for image_path, preprocessed, preprocess_error in progress:
             try:
-                text = caption_image(
+                if preprocess_error is not None:
+                    raise preprocess_error
+                text = caption_image_asagi(
                     image_path=image_path,
                     prompt=args.prompt,
                     processor=processor,
@@ -290,6 +249,7 @@ def main() -> None:
                     top_p=args.top_p,
                     repetition_penalty=args.repetition_penalty,
                     do_sample=args.do_sample,
+                    preprocessed=preprocessed,
                 )
                 record = {
                     "image": jsonl_image_path(image_path, args.path_mode, relative_to),

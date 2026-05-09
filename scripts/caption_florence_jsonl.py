@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--model", default="microsoft/Florence-2-large")
     parser.add_argument("--revision", default="21a599d414c4d928c9032694c424fb94458e3594")
-    parser.add_argument("--task", default="<DETAILED_CAPTION>")
+    parser.add_argument("--task", default="<CAPTION>")
     parser.add_argument("--attn-implementation", default="eager")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=["auto", "fp32", "fp16", "bf16"], default="auto")

@@ -58,7 +58,7 @@ uv run --script scripts/t2i_caption.py \
   --overwrite
 ```
 
-The command uses `microsoft/Florence-2-large` and `<DETAILED_CAPTION>` by default. Each output line matches the training format:
+The command uses `microsoft/Florence-2-large` and `<CAPTION>` by default. Each output line matches the training format:
 
 ```json
 {"image": "/path/to/image.png", "text": "a detailed Florence-2 caption"}
@@ -73,7 +73,7 @@ Useful options:
 - `--overwrite`: replace an existing output file
 - `--device`: device for Florence-2, default `cuda`
 - `--dtype`: `auto`, `fp32`, `fp16`, or `bf16`; default `auto`
-- `--task`: Florence task prompt, default `<DETAILED_CAPTION>`
+- `--task`: Florence task prompt, default `<CAPTION>`
 - `--attn-implementation`: attention backend for Florence-2, default `eager`
 - `--revision`: Florence model revision, default `21a599d414c4d928c9032694c424fb94458e3594`
 - `--max-new-tokens`: generation length limit, default `1024`
@@ -130,7 +130,7 @@ uv run t2i-caption-ja \
 The default prompt is:
 
 ```text
-この画像を見て、次の指示に詳細かつ具体的に答えてください。この写真の内容について詳しく教えてください。
+簡潔に説明してください。
 ```
 
 The output format is the same training JSONL format:
@@ -143,7 +143,6 @@ Useful options:
 
 - `--prompt`: Japanese instruction prompt
 - `--model`: model id, default `MIL-UT/Asagi-2B`
-- `--backend`: `auto`, `asagi`, or `sarashina`; default `auto`
 - `--device-map`: model placement, default `cuda`
 - `--dtype`: `auto`, `fp32`, `fp16`, or `bf16`; default `auto`
 - `--attn-implementation`: optional attention backend override for model loading
@@ -152,11 +151,13 @@ Useful options:
 - `--top-p`: default `0.95`
 - `--repetition-penalty`: default `1.2`
 - `--do-sample` / `--no-do-sample`: sampling mode, default enabled
+- `--preprocess-workers`: number of background threads used for Asagi image loading and processor/tokenizer preprocessing, default `0`
+- `--prefetch-factor`: queued images per preprocessing worker, default `2`
 - `--recursive`, `--limit`, `--path-mode`, `--relative-to`, `--overwrite`, `--continue-on-error`: same behavior as the Florence caption command
 
 Progress is shown with `tqdm`, and per-image filenames and generated captions are not printed during normal runs.
 
-The Japanese caption runner overlays `transformers==4.45.1` and `tokenizers==0.20.3` only for this command, matching the Asagi model card while leaving the main Qwen/PixArt `torch` and `torchvision` environment unchanged. To use the previous Sarashina model, pass `--model sbintuitions/sarashina2.2-vision-3b --backend sarashina`.
+The Japanese caption runner overlays `transformers==4.45.1` and `tokenizers==0.20.3` only for this command, matching the Asagi model card while leaving the main Qwen/PixArt `torch` and `torchvision` environment unchanged.
 
 ## Train
 
