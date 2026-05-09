@@ -63,8 +63,17 @@ class QwenTextConditioner:
             "torch_dtype": dtype,
             "trust_remote_code": True,
         }
-        if config.text.get("attn_implementation"):
-            model_kwargs["attn_implementation"] = config.text["attn_implementation"]
+        attn_implementation = config.text.get("attn_implementation")
+        if attn_implementation == "flash_attention_2" and (
+            device.type != "cuda" or dtype not in {torch.float16, torch.bfloat16}
+        ):
+            warnings.warn(
+                "flash_attention_2 requires CUDA and fp16/bf16; "
+                f"falling back to the model default attention for device={device.type!r}, dtype={dtype}.",
+                stacklevel=2,
+            )
+        elif attn_implementation:
+            model_kwargs["attn_implementation"] = attn_implementation
         try:
             self.text_encoder = AutoModel.from_pretrained(
                 name,
