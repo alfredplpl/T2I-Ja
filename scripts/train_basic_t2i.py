@@ -212,6 +212,38 @@ def first_learning_rate(optimizer) -> float:
     return float(optimizer.param_groups[0]["lr"])
 
 
+def init_trackio(args: argparse.Namespace, config, output_dir: Path):
+    trackio_config = config.train.get("trackio", {})
+    if not (args.trackio or trackio_config.get("enabled", False)):
+        return None, 1
+    try:
+        import trackio
+    except ImportError as exc:
+        raise ImportError("Trackio logging requires trackio. Run `uv sync`.") from exc
+
+    project = args.trackio_project or trackio_config.get("project", "t2i-ja")
+    name = args.trackio_name or trackio_config.get("name")
+    space_id = args.trackio_space_id or trackio_config.get("space_id")
+    log_every_steps = int(trackio_config.get("log_every_steps", 1))
+    init_kwargs = {
+        "project": project,
+        "config": {
+            "config": config.raw,
+            "output_dir": str(output_dir),
+            "data": args.data,
+            "resume_transformer": args.resume_transformer,
+        },
+    }
+    if name:
+        init_kwargs["name"] = name
+    if space_id:
+        init_kwargs["space_id"] = space_id
+    if "auto_log_gpu" in trackio_config:
+        init_kwargs["auto_log_gpu"] = trackio_config["auto_log_gpu"]
+    trackio.init(**init_kwargs)
+    return trackio, max(1, log_every_steps)
+
+
 def load_or_build_transformer(config, dtype: torch.dtype, device: torch.device, resume_transformer: str | None):
     if resume_transformer is None:
         transformer = build_transformer(config)
@@ -230,6 +262,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--resume-transformer", default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--trackio", action="store_true")
+    parser.add_argument("--trackio-project", default=None)
+    parser.add_argument("--trackio-name", default=None)
+    parser.add_argument("--trackio-space-id", default=None)
     return parser.parse_args()
 
 
@@ -291,6 +327,7 @@ def main() -> None:
         transformer.enable_gradient_checkpointing()
     optimizer = build_optimizer(transformer.parameters(), train_config)
     lr_scheduler = build_lr_scheduler(optimizer, train_config)
+    tracker, trackio_log_every_steps = init_trackio(args, config, output_dir)
     autocast_enabled = dtype is not torch.float32
 
     global_step = 0
@@ -331,11 +368,23 @@ def main() -> None:
                     optimizer.zero_grad(set_to_none=True)
 
                 global_step += 1
+                loss_value = loss.detach().float().item() * accumulation
+                current_lr = first_learning_rate(optimizer)
+                if tracker is not None and global_step % trackio_log_every_steps == 0:
+                    tracker.log(
+                        {
+                            "train/loss": loss_value,
+                            "train/lr": current_lr,
+                            "train/epoch": epoch + 1,
+                            "train/optimizer_step": int(optimizer_step),
+                        },
+                        step=global_step,
+                    )
                 progress.update(1)
                 progress.set_postfix(
                     epoch=epoch + 1,
-                    loss=f"{loss.detach().float().item() * accumulation:.4f}",
-                    lr=f"{first_learning_rate(optimizer):.2e}",
+                    loss=f"{loss_value:.4f}",
+                    lr=f"{current_lr:.2e}",
                     opt_step=int(optimizer_step),
                 )
                 if global_step % int(train_config["save_every_steps"]) == 0:
@@ -345,6 +394,8 @@ def main() -> None:
                     return
     finally:
         progress.close()
+        if tracker is not None:
+            tracker.finish()
 
     transformer.save_pretrained(output_dir / "transformer-final")
 

@@ -50,3 +50,8 @@ train:
   mixed_precision: bf16
   num_workers: 2
   save_every_steps: 1000
+  trackio:
+    enabled: false
+    project: t2i-ja
+    log_every_steps: 1
+    auto_log_gpu: false

@@ -200,6 +200,26 @@ Set `train.seed` or pass `--seed` to make sample ordering, bucket shuffling, ran
 
 Use `lr_scheduler: constant_with_warmup` with `warmup_steps` to linearly ramp from zero to `learning_rate`, then keep it constant. Warmup advances on optimizer steps, not gradient accumulation micro steps.
 
+Trackio logging can be enabled from the config or CLI. It logs `train/loss`, `train/lr`, `train/epoch`, and whether the current step performed an optimizer update:
+
+```yaml
+train:
+  trackio:
+    enabled: true
+    project: t2i-ja
+    log_every_steps: 1
+    auto_log_gpu: false
+```
+
+```bash
+uv run t2i-train \
+  --config configs/stage_256.yaml \
+  --data train.jsonl \
+  --output-dir outputs/basic-t2i-256 \
+  --trackio \
+  --trackio-name stage-256
+```
+
 To train progressively, run separate stages and resume only the transformer weights while changing the config resolution and bucket budget. The optimizer is intentionally re-created for each stage.
 
 ```bash
