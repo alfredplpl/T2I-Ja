@@ -37,8 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image-dir", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--model", default="microsoft/Florence-2-large")
-    parser.add_argument("--revision", default="21a599d414c4d928c9032694c424fb94458e3594")
+    parser.add_argument("--model", default="microsoft/Florence-2-base")
+    parser.add_argument("--revision", default=None)
     parser.add_argument("--task", default="<CAPTION>")
     parser.add_argument("--attn-implementation", default="eager")
     parser.add_argument("--device", default="cuda")
@@ -215,17 +215,18 @@ def main() -> None:
 
     device = torch.device(args.device)
     dtype = resolve_dtype(args.dtype, device)
-    processor = AutoProcessor.from_pretrained(
-        args.model,
-        revision=args.revision,
-        trust_remote_code=True,
-    )
+    model_kwargs = {
+        "revision": args.revision,
+        "trust_remote_code": True,
+    }
+    if args.revision is None:
+        model_kwargs.pop("revision")
+    processor = AutoProcessor.from_pretrained(args.model, **model_kwargs)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
-        revision=args.revision,
         torch_dtype=dtype,
         attn_implementation=args.attn_implementation,
-        trust_remote_code=True,
+        **model_kwargs,
     ).to(device)
     retie_florence2_language_weights(model)
     model.eval()

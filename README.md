@@ -58,7 +58,7 @@ uv run --script scripts/t2i_caption.py \
   --overwrite
 ```
 
-The command uses `microsoft/Florence-2-large` and `<CAPTION>` by default. Each output line matches the training format:
+The command uses `microsoft/Florence-2-base` and `<CAPTION>` by default. Each output line matches the training format:
 
 ```json
 {"image": "/path/to/image.png", "text": "a detailed Florence-2 caption"}
@@ -75,7 +75,7 @@ Useful options:
 - `--dtype`: `auto`, `fp32`, `fp16`, or `bf16`; default `auto`
 - `--task`: Florence task prompt, default `<CAPTION>`
 - `--attn-implementation`: attention backend for Florence-2, default `eager`
-- `--revision`: Florence model revision, default `21a599d414c4d928c9032694c424fb94458e3594`
+- `--revision`: optional Florence model revision
 - `--max-new-tokens`: generation length limit, default `1024`
 - `--num-beams`: beam count, default `3`
 - `--square-pad` / `--no-square-pad`: pad non-square images to square before Florence-2, default enabled
