@@ -235,6 +235,21 @@ uv run t2i-infer \
   --output outputs/sample.png
 ```
 
+Useful options:
+
+- `--config`: YAML config used to build the VAE, text encoder, scheduler, and transformer shape. Use the same architecture config family as training.
+- `--checkpoint`: transformer checkpoint directory, such as `outputs/basic-t2i/transformer-final` or `outputs/basic-t2i/transformer-4000`.
+- `--prompt`: prompt text encoded by the Qwen text encoder.
+- `--output`: output image path. Parent directories are created automatically.
+- `--height` / `--width`: output size in pixels. If omitted, both default to `image.resolution` from the config. Use values compatible with the VAE downsampling and transformer patch size; multiples of 16 are the practical default.
+- `--steps`: number of Flow Matching Euler denoising steps, default `30`. Lower values are faster; higher values cost more time.
+- `--guidance-scale`: classifier-free guidance scale, default `4.5`.
+- `--seed`: random seed for the initial latent noise, default `0`.
+- `--device`: torch device, default `cuda`.
+- `--dtype`: `bf16`, `fp16`, or `fp32`, default `bf16`.
+
+`t2i-infer` currently uses an empty negative prompt internally; there is no CLI option for negative prompts yet.
+
 ## Export Pipeline
 
 To write a Diffusers pipeline directory:
