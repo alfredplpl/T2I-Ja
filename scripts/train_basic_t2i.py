@@ -20,6 +20,18 @@ from t2i_ja import build_transformer, load_config
 from t2i_ja.modeling import QwenTextConditioner, load_vae, sample_flow_matching_training_inputs
 
 
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def seed_worker(worker_id: int) -> None:
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed + worker_id)
+
+
 def round_down(value: int, multiple: int) -> int:
     return value - value % multiple
 
@@ -128,21 +140,31 @@ class JsonlImageTextDataset(Dataset):
 
 
 class AspectRatioBucketBatchSampler(BatchSampler):
-    def __init__(self, dataset: JsonlImageTextDataset, batch_size: int, drop_last: bool = True) -> None:
+    def __init__(
+        self,
+        dataset: JsonlImageTextDataset,
+        batch_size: int,
+        drop_last: bool = True,
+        seed: int | None = None,
+    ) -> None:
         self.dataset = dataset
         self.batch_size = batch_size
         self.drop_last = drop_last
+        self.seed = seed
+        self.epoch = 0
 
     def __iter__(self):
+        rng = random.Random(None if self.seed is None else self.seed + self.epoch)
+        self.epoch += 1
         batches = []
         for indices in self.dataset.bucket_to_indices.values():
             shuffled = list(indices)
-            random.shuffle(shuffled)
+            rng.shuffle(shuffled)
             for start in range(0, len(shuffled), self.batch_size):
                 batch = shuffled[start : start + self.batch_size]
                 if len(batch) == self.batch_size or not self.drop_last:
                     batches.append(batch)
-        random.shuffle(batches)
+        rng.shuffle(batches)
         yield from batches
 
     def __len__(self) -> int:
@@ -170,6 +192,22 @@ def build_optimizer(parameters, train_config: dict):
     raise ValueError(f"Unsupported optimizer: {optimizer_name}")
 
 
+def build_lr_scheduler(optimizer, train_config: dict):
+    scheduler_name = train_config.get("lr_scheduler", "constant")
+    if scheduler_name == "constant":
+        return None
+    if scheduler_name == "constant_with_warmup":
+        warmup_steps = int(train_config.get("warmup_steps", 0))
+        if warmup_steps <= 0:
+            return None
+
+        def lr_lambda(step: int) -> float:
+            return min(1.0, float(step + 1) / float(warmup_steps))
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    raise ValueError(f"Unsupported lr_scheduler: {scheduler_name}")
+
+
 def first_learning_rate(optimizer) -> float:
     return float(optimizer.param_groups[0]["lr"])
 
@@ -191,6 +229,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", choices=["fp32", "fp16", "bf16"], default=None)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--resume-transformer", default=None)
+    parser.add_argument("--seed", type=int, default=None)
     return parser.parse_args()
 
 
@@ -203,6 +242,11 @@ def main() -> None:
     device = torch.device(args.device)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    seed = args.seed if args.seed is not None else train_config.get("seed")
+    seed = None if seed is None else int(seed)
+    if seed is not None:
+        seed_everything(seed)
+    data_generator = None if seed is None else torch.Generator().manual_seed(seed)
 
     batch_size = int(train_config["batch_size"])
     dataset = JsonlImageTextDataset(
@@ -218,8 +262,11 @@ def main() -> None:
                 dataset,
                 batch_size=batch_size,
                 drop_last=bool(bucket_config.get("drop_last", False)),
+                seed=seed,
             ),
             num_workers=int(train_config["num_workers"]),
+            worker_init_fn=seed_worker if seed is not None else None,
+            generator=data_generator,
         )
     else:
         loader = DataLoader(
@@ -227,6 +274,8 @@ def main() -> None:
             batch_size=batch_size,
             shuffle=True,
             num_workers=int(train_config["num_workers"]),
+            worker_init_fn=seed_worker if seed is not None else None,
+            generator=data_generator,
         )
 
     vae = load_vae(config, dtype=dtype, device=device)
@@ -241,6 +290,7 @@ def main() -> None:
     if train_config.get("gradient_checkpointing", False):
         transformer.enable_gradient_checkpointing()
     optimizer = build_optimizer(transformer.parameters(), train_config)
+    lr_scheduler = build_lr_scheduler(optimizer, train_config)
     autocast_enabled = dtype is not torch.float32
 
     global_step = 0
@@ -276,6 +326,8 @@ def main() -> None:
                 optimizer_step = (global_step + 1) % accumulation == 0
                 if optimizer_step:
                     optimizer.step()
+                    if lr_scheduler is not None:
+                        lr_scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
 
                 global_step += 1

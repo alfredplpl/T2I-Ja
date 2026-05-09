@@ -183,6 +183,8 @@ The default buckets follow the NovelAI-style setup with a `512 * 768` pixel budg
 
 ```yaml
 train:
+  seed: 42
+  lr_scheduler: constant
   aspect_ratio_bucketing:
     enabled: true
     max_area: 393216
@@ -193,6 +195,10 @@ train:
 ```
 
 Set `enabled: false` to return to the previous square `Resize + CenterCrop` preprocessing.
+
+Set `train.seed` or pass `--seed` to make sample ordering, bucket shuffling, random crops, model initialization, and Flow Matching noise sampling reproducible. The CLI value overrides the config value.
+
+Use `lr_scheduler: constant_with_warmup` with `warmup_steps` to linearly ramp from zero to `learning_rate`, then keep it constant. Warmup advances on optimizer steps, not gradient accumulation micro steps.
 
 To train progressively, run separate stages and resume only the transformer weights while changing the config resolution and bucket budget. The optimizer is intentionally re-created for each stage.
 

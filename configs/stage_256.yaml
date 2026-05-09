@@ -11,7 +11,7 @@ image:
   latent_size: 32
 
 text:
-  max_length: 256
+  max_length: 1024
   hidden_size: 2048
   attn_implementation: flash_attention_2
 
@@ -32,9 +32,11 @@ scheduler:
   shift: 1.0
 
 train:
+  seed: 42
   optimizer: adamw8bit
   learning_rate: 0.0001
-  lr_scheduler: constant
+  lr_scheduler: constant_with_warmup
+  warmup_steps: 500
   batch_size: 8
   aspect_ratio_bucketing:
     enabled: true

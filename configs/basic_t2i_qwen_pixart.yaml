@@ -32,8 +32,10 @@ scheduler:
   shift: 1.0
 
 train:
+  seed: 42
   optimizer: adamw8bit
   learning_rate: 0.0001
+  lr_scheduler: constant
   batch_size: 1
   aspect_ratio_bucketing:
     enabled: true
